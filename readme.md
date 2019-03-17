@@ -56,7 +56,15 @@ HW02
 ===
 ## 1. 實驗題目
 改寫程式以演示Return指令如何運行。
-## 2. 實驗步驟
+## 2. 實驗內容
+在執行副程式呼叫時,必須有一個固定的協議(Calling convention)可以遵守以避免Caller與Callee對於資料存放位置有不同的規範,導致資料遺失或存放漫無章法的問題,另外此處針對堆疊的清理是交由副程式執行,為一個類似pascal calling convention或stdcall的呼叫形式.
+但事實上ARM架構有獨有的Calling convention叫作AAPCS,以下是官方文件Procedure Call Standard for the ARM Architecture對此協議的介紹:
+![](https://github.com/Kai0522/ESEmbedded_HW03/blob/master/AAPCS/feature.png)
+![](https://github.com/Kai0522/ESEmbedded_HW03/blob/master/AAPCS/Register.png)
+![](https://github.com/Kai0522/ESEmbedded_HW03/blob/master/AAPCS/Memory.png)
+以上文件對此協議有一個介紹,所有的caller與callee皆會以上述的規範進行存放與使用記憶體
+
+## 3. 實驗步驟
 
 1. 設計測試程式 main.c ，從 _rest_handler) 開始後依序執行(a)引入一個引數並回傳一個值(b)引入五個引數並回傳一個值(c)引入五個指標引數，併使用指標回傳複數個值。
 
@@ -248,7 +256,7 @@ Disassembly of section .mytext:
 (6)執行副程式中的運算  
 (7-9)將運算結果存入R7+12並將資料放至R0準備回傳  
 (10-11)將SP往上推20放回原先位置  
-(12)使用後置索引,將第一步放入堆疊的資料取回R7，並將SP推回執行第一步前的位置,避免堆疊溢位  
+(12)使用後置索引,將第一步放入堆疊的資料取回R7,以回歸原先的堆疊指標,並將SP推回執行第一步前的位置,避免堆疊溢位  
 (13)指回主程式  
 3.以下在接著討論當引數數量較多時會如何進行資料的傳遞,先討論主程式的運作方式
 ```
@@ -290,7 +298,50 @@ Disassembly of section .mytext:
 
 ```
 由上面反組譯碼可以看到,大抵上皆與第一個副程式相同惟獨第15行的"ldr r3, [r7, #32]"與前者不同,此處將指標指回呼叫副程式前存入的堆疊記憶體,並將其存入R3而非R4.由此可以了解到大於4個引數時副程式的執行會到需要第四個引數時才去存取堆疊來使用.
-
+4.最後再用第三個副程式觀察如果使用指標進行傳遞程式會如何運行,先從主程式看起:
+```
+  cc:	f107 0014 	add.w	r0, r7, #20
+  d0:	f107 0110 	add.w	r1, r7, #16
+  d4:	f107 020c 	add.w	r2, r7, #12
+  d8:	f107 0408 	add.w	r4, r7, #8
+  dc:	1d3b      	adds	r3, r7, #4
+  de:	9300      	str	r3, [sp, #0]
+  e0:	4623      	mov	r3, r4
+  e2:	f7ff ffb9 	bl	58 <MutiReturn>
+  e6:	e7fe      	b.n	e6 <reset_handler+0x4e>   //while(1)
+ ```
+由上述反組譯碼可以清楚看到如同第二的副程式的結果在call function時程式會使用R1,R2,R3進行資料傳遞,超過的部分會放入堆疊記憶體做儲存,而且R3會優先用於資料運算,在第四行可以看到資料先被存放置R4,而後將R3推入堆疊後,再將R4移至R3,因此與第二個副程式相同,堆疊中存放的會是最後一個引數.以下再觀察副程式的處理狀況:
+ ```
+  58:	b480      	push	{r7}
+  5a:	b085      	sub	sp, #20
+  5c:	af00      	add	r7, sp, #0
+  5e:	60f8      	str	r0, [r7, #12]
+  60:	60b9      	str	r1, [r7, #8]
+  62:	607a      	str	r2, [r7, #4]
+  64:	603b      	str	r3, [r7, #0]
+  66:	68fb      	ldr	r3, [r7, #12]
+  68:	f503 73c8 	add.w	r3, r3, #400	; 0x190
+  6c:	60fb      	str	r3, [r7, #12]
+  6e:	68bb      	ldr	r3, [r7, #8]
+  70:	f503 73c8 	add.w	r3, r3, #400	; 0x190
+  74:	60bb      	str	r3, [r7, #8]
+  76:	687b      	ldr	r3, [r7, #4]
+  78:	f503 73c8 	add.w	r3, r3, #400	; 0x190
+  7c:	607b      	str	r3, [r7, #4]
+  7e:	683b      	ldr	r3, [r7, #0]
+  80:	f503 73c8 	add.w	r3, r3, #400	; 0x190
+  84:	603b      	str	r3, [r7, #0]
+  86:	69bb      	ldr	r3, [r7, #24]
+  88:	f503 73c8 	add.w	r3, r3, #400	; 0x190
+  8c:	61bb      	str	r3, [r7, #24]
+  8e:	3714      	adds	r7, #20
+  90:	46bd      	mov	sp, r7
+  92:	f85d 7b04 	ldr.w	r7, [sp], #4
+  96:	4770      	bx	lr 
+ ```
+ 可以由此看到與第二個副程式執行大同小異,再執行完R1到R3的運算後會借由R7指向Call function前放入堆疊的資料,另外因為借由指標做引數的副程式無須回傳所以此處並無將回傳值放入R0的程序.
 ## 3. 結果與討論
-
+1.在AAPC架構中argument只能有三個置於暫存器,其餘皆存放於堆疊中.  
+2.R3會被優先用於計算資料,R7優先用於存放SP與進行SP的移位.
+3.若有回傳資料會置於R0中進行回傳
 
